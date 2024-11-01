@@ -1,7 +1,9 @@
 from typing import List 
+from src.layers.layer import Layer
 from src.layers.dense import Dense
+from src.layers.conv2d import Conv2d
 
-class MLP:
+class Sequential:
     def __init__(self, *args):
         '''
         Parameters
@@ -9,7 +11,7 @@ class MLP:
         ***args**: List[Layer] or Layer
             Takes instances of Layer class in input order
         '''
-        self.layers: List[Dense] = [*args]
+        self.layers: List[Layer] = [*args]
         self.history = {
             'loss': [],
             'metric': []
@@ -22,7 +24,10 @@ class MLP:
         prev_units = X.shape[1]
         for layer in self.layers:
             layer.build(prev_units)
-            prev_units = layer.units
+            if isinstance(layer, Dense):
+                prev_units = layer.units
+
+
 
     def _feedforward(self, X):
         '''
