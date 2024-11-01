@@ -1,7 +1,8 @@
 import numpy as np
 from src import initializers, activations
-            
-class Dense:
+from src.layers.layer import Layer
+
+class Dense(Layer):
     '''
     Fully-Connected layer implementation.
     
