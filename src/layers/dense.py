@@ -32,26 +32,32 @@ class Dense(Layer):
         self.weights_initializer = initializers.get(weights_initializer)()
         self.bias_initializer = initializers.get(bias_initializer)()
         
-    def build(self, prev_units: int):
+    def build(self, input_size):
         '''
         Initialize weights and biases.
 
         Parameters
         ----------
-        **prev_units**: int
-            Number of neurons in the previous layer
+        **input_size**: int or tuple
+            Number of neurons in the previous layer. 
+            Tuple recieved from conv2d layer, it's need for supporting flatten operation
         '''
-        self.weights = self.weights_initializer(shape=(prev_units, self.units))
+        if isinstance(input_size, tuple):
+            units_in, *_ = input_size[0]
+        else:
+            units_in = input_size
+
+        self.weights = self.weights_initializer(shape=(units_in, self.units))
         self.bias = self.bias_initializer(shape=(1, self.units))
 
-    def forward(self, prev_out: np.ndarray):
+    def forward(self, input: np.ndarray):
         '''
-        Compute linear combination `linear = prev_out @ weights + broadcast(bias)`\n
+        Compute linear combination `linear = input @ weights + broadcast(bias)`\n
         and apply activation function `out = activation(linear)` on it if specified
         
         Parameters
         ----------
-        **prev_out**: np.ndarray
+        **input**: np.ndarray
             Output of the previous layer
 
         Returns
@@ -62,16 +68,16 @@ class Dense(Layer):
         Notes
         -----
         **Shapes assumption**: 
-            `prev_out.shape = (m, n_prev)`
+            `input.shape = (m, n_prev)`
             `weights.shape = (n_prev, n_curr)`
             `bias.shape = (1, n_curr)`
-            `out.shape = (m, n_prev)`
+            `out.shape = (m, n_curr)`
             where:
                 **m**: samples
                 **n_prev**: previous layer units
                 **n_curr**: current layer units
         '''    
-        self.input = prev_out
+        self.input = input
         out = self.input @ self.weights + self.bias
         if self.activation is not None:
             out = self.activation(out)
