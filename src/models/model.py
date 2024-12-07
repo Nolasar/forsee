@@ -21,12 +21,19 @@ class Sequential:
         '''
         Connect layers with each other and initialize weights
         '''
+        if isinstance(self.layers[0], Conv2d):
+            if len(X.shape) == 3:
+                X = X.reshape(X.shape[0], 1, X.shape[1], X.shape[2])
+
         prev_units = X.shape[1]
+
         for layer in self.layers:
             layer.build(prev_units)
+            
             if isinstance(layer, Dense):
                 prev_units = layer.units
-
+            elif isinstance(layer, Conv2d):
+                prev_units = layer.filters
 
 
     def _feedforward(self, X):
