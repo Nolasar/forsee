@@ -1,4 +1,3 @@
-import torch
 import numpy as np
 from src import initializers
 from src.layers.layer import Layer
@@ -10,6 +9,7 @@ class Conv2d(Layer):
         kernel_size: tuple[int, int],
         stride: int = 1,
         padding: int = 0,
+        chunk_size: int = 1_000,
         kernel_initializer: str = 'glorot_uniform',
         bias_initializer: str = 'zeros'
         ):
@@ -17,34 +17,42 @@ class Conv2d(Layer):
         self.kernel_size = kernel_size
         self.stride = stride
         self.padding = padding
+        self.chunk_size = chunk_size
         self.kernel_initializer = initializers.get(kernel_initializer)()
         self.bias_initializer = initializers.get(bias_initializer)()
-        self.buffer = None
+        self.output_size = None
 
-    def build(self, channels_in: int):
+    def build(self, input_size):
         '''
         Parameters
         ----------
         **channels_in**: int
             Number of input channels
         '''
+        channels_in, h, w = input_size
+
+        h_o = (h + 2*self.padding - self.kernel_size[0]) // self.stride + 1
+        w_o = (w + 2*self.padding - self.kernel_size[1]) // self.stride + 1
+
+        self.output_size = (self.filters, h_o, w_o)
+
         print('build ...')
         self.kernels = self.kernel_initializer(shape=(self.filters, channels_in, *self.kernel_size))    
-        self.bias = self.bias_initializer(shape=(self.filters,))
+        self.bias = self.bias_initializer(shape=(self.filters, 1))
         print('build ends')
 
     def forward(self, prev_out: np.ndarray):
         '''
         Parameters
         ----------
-        **prev_out**: np.ndarray
+        prev_out : np.ndarray
             Output of the previous layer
             shape: (samples, channels, height, width)
         '''
         return self._convolution(
             image=prev_out,
             kernels=self.kernels,
-            indices=self.buffer,
+            chunk_size=self.chunk_size,
             stride=self.stride,
             padding=self.padding
             )
@@ -53,7 +61,7 @@ class Conv2d(Layer):
         pass
     
     
-    def _convolution(self, image:np.ndarray, kernels:np.ndarray, indices:np.ndarray=None, stride:int=1, padding:int=0):
+    def _convolution(self, image:np.ndarray, kernels:np.ndarray, chunk_size:int=1_000, stride:int=1, padding:int=0):
         """
         Performs a convolution (cross-correlation in terms of math) between image and kernel.
 
@@ -63,8 +71,8 @@ class Conv2d(Layer):
             Numpy array with shape (samples, channels, H_im, W_im)
         kernel : np.ndarray
             Numpy array with shape (filters, channels, H_k, W_k)
-        indices : np.ndarray, optinal
-            Pre-calculated indices for the `im2col` transform. If not provided, they will be calculated automatically.
+        chunk_size : int
+            Size of chunks. Chunks need for optimize matmul operation of large matrices
         stride : int
             Step size of the sliding window in the convolution.
         padding : int
@@ -107,13 +115,12 @@ class Conv2d(Layer):
        
         # Perform the matrix multiplication between the flattened kernel and image columns.
         # This operation applies the convolution in a vectorized manner.
-        chunk_size = 6_000
         output_col = np.empty((samples, filters, H_out * W_out))
 
         print('matmul operation ...')
         for k in range(0, samples, chunk_size):
             chunk = img_col[k:k+chunk_size]
-            output_col[k:k+chunk_size] = kernel_col @ chunk
+            output_col[k:k+chunk_size] = kernel_col @ chunk + self.bias
 
             del chunk
             print(f'{k+chunk_size} images processed ...')
