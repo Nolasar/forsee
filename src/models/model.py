@@ -2,6 +2,7 @@ from typing import List
 from src.layers.layer import Layer
 from src.layers.dense import Dense
 from src.layers.conv2d import Conv2d
+from src.layers.flatten import Flatten
 
 class Sequential:
     def __init__(self, *args):
@@ -21,19 +22,15 @@ class Sequential:
         '''
         Connect layers with each other and initialize weights
         '''
-        if isinstance(self.layers[0], Conv2d):
-            if len(X.shape) == 3:
-                X = X.reshape(X.shape[0], 1, X.shape[1], X.shape[2])
-
-        prev_units = X.shape[1]
+        input_size = X.shape[1:]
 
         for layer in self.layers:
-            layer.build(prev_units)
+            layer.build(input_size)
             
-            if isinstance(layer, Dense):
-                prev_units = layer.units
+            if isinstance(layer, (Dense, Flatten)):
+                input_size = layer.units
             elif isinstance(layer, Conv2d):
-                prev_units = layer.filters
+                input_size = layer.output_size
 
 
     def _feedforward(self, X):
