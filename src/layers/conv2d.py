@@ -41,97 +41,97 @@ class Conv2d(Layer):
         self.bias = self.bias_initializer(shape=(self.filters, 1))
         print('build ends')
 
-    def forward(self, prev_out: np.ndarray):
+    def forward(self, image:np.ndarray):
         '''
         Parameters
         ----------
         prev_out : np.ndarray
             Output of the previous layer
             shape: (samples, channels, height, width)
-        '''
-        return self._convolution(
-            image=prev_out,
-            kernels=self.kernels,
-            chunk_size=self.chunk_size,
-            stride=self.stride,
-            padding=self.padding
-            )
-    
-    def backward(self):
-        pass
-    
-    
-    def _convolution(self, image:np.ndarray, kernels:np.ndarray, chunk_size:int=1_000, stride:int=1, padding:int=0):
-        """
-        Performs a convolution (cross-correlation in terms of math) between image and kernel.
-
-        Parameters
-        ----------
-        image : np.ndarray
-            Numpy array with shape (samples, channels, H_im, W_im)
-        kernel : np.ndarray
-            Numpy array with shape (filters, channels, H_k, W_k)
-        chunk_size : int
-            Size of chunks. Chunks need for optimize matmul operation of large matrices
-        stride : int
-            Step size of the sliding window in the convolution.
-        padding : int
-            Amount of padding to apply to the input array before convolution.
-
-        Returns
-        -------
-        output : np.ndarray
-            Result of convolution. Numpy array with shape (samples, filters, H_out, W_out)
-
-        Notes
-        -----
-        - H_out = (H_im + 2 * padding - H_k) // stride + 1
-        - W_out = (W_im + 2 * padding - W_k) // stride + 1
-        """
-        # Params of input image and kernels
-        samples, channels, H_im, W_im = image.shape
-        filters, _, H_k, W_k = kernels.shape
-
-        # Output shape
-        H_out = (H_im + 2 * padding - H_k) // stride + 1
-        W_out = (W_im + 2 * padding - W_k) // stride + 1    
+        '''  
+        samples, channels, h, w = image.shape
 
         # Add padding to input image
-        if padding != 0:
-            image = np.pad(image, pad_width=((0,0), (0,0), (padding,padding), (padding,padding)), mode='constant')
+        image_pad = np.pad(
+            array=image, 
+            pad_width=((0,0), (0,0), (self.padding,self.padding), (self.padding,self.padding)), 
+            mode='constant')
         
-        # Calculate indices if not provided
-        print('generate indices ...')
-        (i, j, d) = self._calculate_indices(window_size=(H_k, W_k), output_size=(H_out, W_out), channels=channels, stride=stride)
-        print('completed!')
+        self.image = image_pad
 
-        print('flatten image ...')
         # Rearrange the input image into a flattened column representation using `im2col` technique
-        img_col = image[:, d, i, j].reshape((samples, channels * H_k * W_k, -1))     
-        print('comleted!')
+        print('Im2col function ...')
+        self.img_col = self._im2col(
+            image=image_pad,
+            window_size=self.kernel_size,
+            output_size=self.output_size[1:],
+            stride=self.stride
+        )
+        print('Im2col comleted!')
 
-        # Flatten the kernel into a 2D matrix where each row corresponds to a single filter
-        kernel_col = kernels.reshape((filters, -1))
-       
+        # Flatten a kernels
+        self.kernel_col = self.kernels.reshape(self.filters, -1)
+
+        # Init output column repr
+        output_col = np.empty((samples, self.filters, self.output_size[1] * self.output_size[2]))      
+
         # Perform the matrix multiplication between the flattened kernel and image columns.
         # This operation applies the convolution in a vectorized manner.
-        output_col = np.empty((samples, filters, H_out * W_out))
-
         print('matmul operation ...')
-        for k in range(0, samples, chunk_size):
-            chunk = img_col[k:k+chunk_size]
-            output_col[k:k+chunk_size] = kernel_col @ chunk + self.bias
+        for k in range(0, samples, self.chunk_size):
+            chunk = self.img_col[k:k + self.chunk_size]
+            output_col[k:k + self.chunk_size] = self.kernel_col @ chunk + self.bias
+            print(f'{k+self.chunk_size} images processed ...')          
 
-            del chunk
-            print(f'{k+chunk_size} images processed ...')
-        
-        # Reshape the result back into the output tensor shape, aligning with the convolutional layer's expected dimensions.
-        output = output_col.reshape((samples, filters, H_out, W_out))
-
-        del output_col, img_col, kernel_col
-
-        return output
+        return output_col.reshape(samples, self.filters, self.output_size[1], self.output_size[2])
     
+    
+    def backward(self, dout:np.ndarray, lr):
+        samples = dout.shape[0]
+
+        dout_col = dout.reshape(samples, self.filters, -1)
+
+        dimg_col = self.kernel_col.T @ dout_col
+
+        dimage = self._col2im(dimg_col, self.image.shape, self.kernel_size, self.output_size[1:], self.stride)
+
+        dkernel = dout_col @ self.img_col.transpose(0, 2, 1)
+
+        if self.padding > 0:
+            dimage = dimage[:, :, self.padding:-self.padding, self.padding:-self.padding]
+
+        return dimage
+    
+    def _im2col(self, image: np.ndarray, window_size: tuple, output_size: tuple, stride: int):
+        """
+        Transform the input image into column representation for efficient convolution.
+        """
+        samples, channels, _, _ = image.shape
+        i, j, d = self._calculate_indices(window_size, output_size, channels, stride)
+        col = image[:, d, i, j].reshape((samples, channels * np.prod(window_size), -1))
+        return col
+    
+    def _col2im(self, cols: np.ndarray, image_shape: tuple, window_size: tuple, output_size: tuple, stride: int):
+        samples, channels, H_im, W_im = image_shape
+        h_k, w_k = window_size
+
+        i, j, d = self._calculate_indices(window_size, output_size, channels, stride)
+        cols_reshaped = cols.reshape(channels * h_k * w_k, -1, samples).transpose(2, 0, 1)
+        image = np.zeros((samples, channels, H_im, W_im), dtype=cols.dtype)
+
+        # # Debugging output
+        # print(f"Calculated indices:\ni: {i.shape}, j: {j.shape}, d: {d.shape}")
+        # print(f"Max index values: i: {i.max()}, j: {j.max()}, d: {d.max()}")
+        # print(f"Image shape: {image.shape}")
+
+        # # Check if indices exceed bounds
+        # if i.max() >= H_im or j.max() >= W_im:
+        #     raise ValueError(f"Index out of bounds: i.max()={i.max()}, H_im={H_im}, j.max()={j.max()}, W_im={W_im}")
+
+        np.add.at(image, (slice(None), d, i, j), cols_reshaped)
+
+        return image
+
     
     def _calculate_indices(self, window_size: tuple, output_size: tuple, channels: int, stride:int = 1):
         """
@@ -168,33 +168,21 @@ class Conv2d(Layer):
         The indices generated by this function can be used to extract patches from an input 
         array or to reconstruct the input from patches. It is particularly useful for 
         implementing operations like `im2col` efficiently.
-
-        Examples
-        --------
-        Compute indices for a 3x3 sliding window with an output size of (4, 4), 3 channels, 
-        and a stride of 1:
-
-        >>> window_size = (3, 3)
-        >>> output_size = (4, 4)
-        >>> channels = 3
-        >>> stride = 1
-        >>> i1, j1, d = calculate_indices(window_size, output_size, channels, stride)
-        >>> i1.shape, j1.shape, d.shape
-        ((144,), (144,), (144,))
         """
         h_k, w_k = window_size
         h_out, w_out = output_size
 
-        i0 = np.concatenate([np.tile(np.repeat(np.arange(i*stride, i*stride + h_k), w_k), w_out) for i in range(h_out)])
+        i0 = np.repeat(np.arange(h_k), w_k)
+        i0 = np.tile(i0, channels)
+        i1 = stride * np.repeat(np.arange(h_out), w_out)
+        i = i0.reshape(-1, 1) + i1.reshape(1, -1)
 
-        j0 = np.tile(np.concatenate([np.tile(np.arange(j*stride, j*stride + w_k), h_k) for j in range(w_out)]), h_out)
+        j0 = np.tile(np.arange(w_k), h_k * channels)
+        j1 = stride * np.tile(np.arange(w_out), h_out)
+        j = j0.reshape(-1, 1) + j1.reshape(1, -1)
 
-        i1 = np.tile(i0, channels)
-        j1 = np.tile(j0, channels)
+        d = np.repeat(np.arange(channels), h_k * w_k).reshape(-1, 1)
 
-        no_idx = i0.shape[0]
-        d = np.repeat(np.arange(channels), no_idx)
+        return i, j, d
 
-        del i0, j0
 
-        return (i1, j1, d)
