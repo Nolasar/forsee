@@ -4,11 +4,12 @@ import math
 
 class Flatten(Layer):
     def __init__(self):
-        self.units = None
+        pass
 
     def build(self, input_size):
         self.units = math.prod(input_size)
-        
+        self.input_size = input_size
+
     def forward(self, input: np.ndarray):
         """
         Flatten an output of conv2d layer.
@@ -23,9 +24,7 @@ class Flatten(Layer):
         output : np.ndarray
             2d numpy array of shape (samples, channels * H * W)
         """
-        samples, channels, h, w = input.shape
-        output = input.reshape(samples, channels * h * w)
-        return output
+        return input.reshape(input.shape[0], self.units)
 
-    def backward(self):
-        return super().backward()
+    def backward(self, dout, lr):
+        return dout.reshape(dout.shape[0], *self.input_size)
