@@ -1,8 +1,9 @@
 from src.utils.naming import to_snake_case
-from src.activations.activations import Sigmoid
+from src.activations.activations import Sigmoid, Softmax
 
 ALL_OBJECTS = {
-    Sigmoid
+    Sigmoid,
+    Softmax
 }
 ALL_OBJECTS_DICT = {
     func.__name__: func for func in ALL_OBJECTS
