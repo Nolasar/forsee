@@ -1,188 +1,305 @@
 import numpy as np
-from src import initializers
+from src import initializers, activations
 from src.layers.layer import Layer
 
 class Conv2d(Layer):
+    """
+    A 2D convolutional layer with support for forward and backward passes.
+    """
+
     def __init__(
         self,
-        filters: int,
+        channels_out: int,
         kernel_size: tuple[int, int],
+        activation: str = 'relu',
+        kernel_initializer: str = 'glorot_uniform',
+        bias_initializer: str = 'zeros',
         stride: int = 1,
         padding: int = 0,
-        chunk_size: int = 1_000,
-        kernel_initializer: str = 'glorot_uniform',
-        bias_initializer: str = 'zeros'
-        ):
-        self.filters = filters
+    ):
+        """
+        Initialize the Conv2d layer.
+
+        Parameters
+        ----------
+        channels_out : int
+            Number of output channels (filters).
+        kernel_size : tuple[int, int]
+            Size of the convolutional kernel (height, width).
+        activation : str, optional
+            Activation function, by default 'relu'.
+        kernel_initializer : str, optional
+            Initializer for the kernel weights, by default 'glorot_uniform'.
+        bias_initializer : str, optional
+            Initializer for the bias, by default 'zeros'.
+        stride : int, optional
+            Stride of the convolution, by default 1.
+        padding : int, optional
+            Padding size, by default 0.
+        """
+        self.channels_out = channels_out
         self.kernel_size = kernel_size
-        self.stride = stride
-        self.padding = padding
-        self.chunk_size = chunk_size
+        self.activation = activations.get(activation)()
         self.kernel_initializer = initializers.get(kernel_initializer)()
         self.bias_initializer = initializers.get(bias_initializer)()
-        self.output_size = None
+        self.stride = stride
+        self.pad = padding
 
-    def build(self, input_size):
-        '''
-        Parameters
-        ----------
-        **channels_in**: int
-            Number of input channels
-        '''
-        channels_in, h, w = input_size
-
-        h_o = (h + 2*self.padding - self.kernel_size[0]) // self.stride + 1
-        w_o = (w + 2*self.padding - self.kernel_size[1]) // self.stride + 1
-
-        self.output_size = (self.filters, h_o, w_o)
-
-        print('build ...')
-        self.kernels = self.kernel_initializer(shape=(self.filters, channels_in, *self.kernel_size))    
-        self.bias = self.bias_initializer(shape=(self.filters, 1))
-        print('build ends')
-
-    def forward(self, image:np.ndarray):
-        '''
-        Parameters
-        ----------
-        prev_out : np.ndarray
-            Output of the previous layer
-            shape: (samples, channels, height, width)
-        '''  
-        samples, channels, h, w = image.shape
-
-        # Add padding to input image
-        image_pad = np.pad(
-            array=image, 
-            pad_width=((0,0), (0,0), (self.padding,self.padding), (self.padding,self.padding)), 
-            mode='constant')
-        
-        self.image = image_pad
-
-        # Rearrange the input image into a flattened column representation using `im2col` technique
-        print('Im2col function ...')
-        self.img_col = self._im2col(
-            image=image_pad,
-            window_size=self.kernel_size,
-            output_size=self.output_size[1:],
-            stride=self.stride
-        )
-        print('Im2col comleted!')
-
-        # Flatten a kernels
-        self.kernel_col = self.kernels.reshape(self.filters, -1)
-
-        # Init output column repr
-        output_col = np.empty((samples, self.filters, self.output_size[1] * self.output_size[2]))      
-
-        # Perform the matrix multiplication between the flattened kernel and image columns.
-        # This operation applies the convolution in a vectorized manner.
-        print('matmul operation ...')
-        for k in range(0, samples, self.chunk_size):
-            chunk = self.img_col[k:k + self.chunk_size]
-            output_col[k:k + self.chunk_size] = self.kernel_col @ chunk + self.bias
-            print(f'{k+self.chunk_size} images processed ...')          
-
-        return output_col.reshape(samples, self.filters, self.output_size[1], self.output_size[2])
-    
-    
-    def backward(self, dout:np.ndarray, lr):
-        samples = dout.shape[0]
-
-        dout_col = dout.reshape(samples, self.filters, -1)
-
-        dimg_col = self.kernel_col.T @ dout_col
-
-        dimage = self._col2im(dimg_col, self.image.shape, self.kernel_size, self.output_size[1:], self.stride)
-
-        dkernel = dout_col @ self.img_col.transpose(0, 2, 1)
-
-        if self.padding > 0:
-            dimage = dimage[:, :, self.padding:-self.padding, self.padding:-self.padding]
-
-        return dimage
-    
-    def _im2col(self, image: np.ndarray, window_size: tuple, output_size: tuple, stride: int):
+    def build(self, input_size: tuple):
         """
-        Transform the input image into column representation for efficient convolution.
-        """
-        samples, channels, _, _ = image.shape
-        i, j, d = self._calculate_indices(window_size, output_size, channels, stride)
-        col = image[:, d, i, j].reshape((samples, channels * np.prod(window_size), -1))
-        return col
-    
-    def _col2im(self, cols: np.ndarray, image_shape: tuple, window_size: tuple, output_size: tuple, stride: int):
-        samples, channels, H_im, W_im = image_shape
-        h_k, w_k = window_size
-
-        i, j, d = self._calculate_indices(window_size, output_size, channels, stride)
-        cols_reshaped = cols.reshape(channels * h_k * w_k, -1, samples).transpose(2, 0, 1)
-        image = np.zeros((samples, channels, H_im, W_im), dtype=cols.dtype)
-
-        # # Debugging output
-        # print(f"Calculated indices:\ni: {i.shape}, j: {j.shape}, d: {d.shape}")
-        # print(f"Max index values: i: {i.max()}, j: {j.max()}, d: {d.max()}")
-        # print(f"Image shape: {image.shape}")
-
-        # # Check if indices exceed bounds
-        # if i.max() >= H_im or j.max() >= W_im:
-        #     raise ValueError(f"Index out of bounds: i.max()={i.max()}, H_im={H_im}, j.max()={j.max()}, W_im={W_im}")
-
-        np.add.at(image, (slice(None), d, i, j), cols_reshaped)
-
-        return image
-
-    
-    def _calculate_indices(self, window_size: tuple, output_size: tuple, channels: int, stride:int = 1):
-        """
-        Calculate flattened indices for extracting patches from an input array.
-
-        This function computes the row, column, and depth indices required to transform 
-        an input array into a flattened column format (e.g., for `im2col` operations). 
-        These indices correspond to the spatial locations of the sliding window patches 
-        and their respective channels.
+        Build the layer by initializing kernel, bias, and output dimensions.
 
         Parameters
         ----------
-        window_size : tuple of int
-            The height and width of the sliding window (kernel size), represented as 
-            `(h_k, w_k)`.
-        output_size : tuple of int
-            The height and width of the output feature map, represented as `(h_out, w_out)`.
-        channels : int
-            The number of channels in the input array.
-        stride : int, optional
-            The step size for sliding the window across the input array (default is 1).
+        input_size : tuple
+            Shape of the input as (channels_in, height, width).
+        """
+        self.input_size = (input_size[0], input_size[1] + 2 * self.pad, input_size[2] + 2 * self.pad)
+
+        h_out = (self.input_size[1] - self.kernel_size[0]) // self.stride + 1
+        w_out = (self.input_size[2] - self.kernel_size[1]) // self.stride + 1
+
+        self.output_size = (self.channels_out, h_out, w_out)
+
+        # Initialize kernel and bias
+        self.kernel = self.kernel_initializer(shape=(self.channels_out, self.input_size[0], *self.kernel_size))
+        self.bias = self.bias_initializer(shape=(self.channels_out,))
+
+        # Initialize the Functional utility
+        self.tools = Functional()
+
+    def forward(self, image: np.ndarray):
+        """
+        Perform the forward pass of the Conv2d layer.
+
+        Parameters
+        ----------
+        image : np.ndarray
+            Input image of shape (samples, channels_in, height, width).
 
         Returns
         -------
-        i1 : np.ndarray
-            The flattened row indices of the patches for all channels.
-        j1 : np.ndarray
-            The flattened column indices of the patches for all channels.
-        d : np.ndarray
-            The channel indices repeated for each patch.
-
-        Notes
-        -----
-        The indices generated by this function can be used to extract patches from an input 
-        array or to reconstruct the input from patches. It is particularly useful for 
-        implementing operations like `im2col` efficiently.
+        output : np.ndarray
+            Output of the convolutional layer with shape (samples, channels_out, h_out, w_out).
         """
-        h_k, w_k = window_size
-        h_out, w_out = output_size
+        samples = image.shape[0]
 
+        # Apply padding if required
+        if self.pad != 0:
+            image_pad = np.pad(
+                array=image,
+                pad_width=((0, 0), (0, 0), (self.pad, self.pad), (self.pad, self.pad)),
+                mode='constant'
+            )
+        else:
+            image_pad = image
+
+        # Convert the image to columnar format
+        self.image_col = self.tools.im2col(image=image_pad, window_size=self.kernel_size, stride=self.stride)
+
+        # Flatten the kernel for matrix multiplication
+        self.kernel_col = self.kernel.reshape(self.channels_out, -1)
+
+        # Perform convolution as a matrix multiplication
+        output_col = self.kernel_col @ self.image_col + self.bias[np.newaxis, :, np.newaxis]
+
+        # Apply activation if specified
+        if self.activation is not None:
+            output_col = self.activation(output_col)
+
+        # Reshape the output to its final shape
+        return output_col.reshape(samples, self.channels_out, *self.output_size[1:])
+
+    def backward(self, dout: np.ndarray):
+        """
+        Perform the backward pass of the Conv2d layer.
+
+        Parameters
+        ----------
+        dout : np.ndarray
+            Gradient of the loss with respect to the output, shape (samples, channels_out, h_out, w_out).
+
+        Returns
+        -------
+        dimage : np.ndarray
+            Gradient of the loss with respect to the input, shape (samples, channels_in, h_in, w_in).
+        """
+        samples = dout.shape[0]
+
+        # Reshape the gradient to columnar format
+        dout_col = dout.reshape(samples, self.channels_out, -1)
+
+        # Apply activation's derivative
+        if self.activation is not None:
+            dout_col = self.activation.backward(dout_col)
+
+        # Compute gradient of the kernel
+        dkernel_col = np.einsum('scm,snm->cn', dout_col, self.image_col)
+        self.dkernel = dkernel_col.reshape(self.channels_out, self.input_size[0], *self.kernel_size)
+
+        # Compute gradient of the bias
+        self.dbias = np.einsum('schw->c', dout)
+
+        # Compute gradient of the input
+        dimage_col = np.einsum('cn,scm->snm', self.kernel_col, dout_col)
+
+        # Convert columnar gradient back to image format
+        dimage = self.tools.col2im(
+            columnar=dimage_col,
+            window_size=self.kernel_size,
+            image_size=(samples, *self.input_size),
+            stride=self.stride
+        )
+
+        # Remove padding if applied
+        if self.pad > 0:
+            dimage = dimage[:, :, self.pad:-self.pad, self.pad:-self.pad]
+
+        return dimage
+
+    def get_params(self):
+        """
+        Get the parameters of the Conv2d layer.
+
+        Returns
+        -------
+        dict
+            Dictionary containing {'kernel': self.kernel, 'bias': self.bias}.
+        """
+        return {'kernel': self.kernel, 'bias': self.bias}
+
+    def get_grads(self):
+        """
+        Get the gradients of the Conv2d layer.
+
+        Returns
+        -------
+        dict
+            Dictionary containing {'kernel': self.dkernel, 'bias': self.dbias}.
+        """
+        return {'kernel': self.dkernel, 'bias': self.dbias}
+
+
+
+class Functional:
+    """
+    A utility class for handling operations like im2col and col2im
+    for convolutional layers.
+    """
+
+    def __init__(self):
+        """
+        Initialize the Functional utility class.
+        """
+        pass
+
+    def _generate_indices(self, image_size: tuple, window_size: tuple, stride: int):
+        """
+        Generate indices for slicing image patches for im2col.
+
+        Parameters
+        ----------
+        image_size : tuple
+            Shape of the image as (batch_size, channels, height, width).
+        window_size : tuple
+            Size of the convolution kernel as (kernel_height, kernel_width).
+        stride : int
+            Stride of the convolution.
+
+        Returns
+        -------
+        i : ndarray
+            Row indices for slicing patches.
+        j : ndarray
+            Column indices for slicing patches.
+        d : ndarray
+            Depth indices for slicing patches.
+        """
+        _, channels, h_in, w_in = image_size
+        h_k, w_k = window_size
+
+        # Compute output dimensions
+        h_out = (h_in - h_k) // stride + 1
+        w_out = (w_in - w_k) // stride + 1
+
+        # Create row indices for patches
         i0 = np.repeat(np.arange(h_k), w_k)
         i0 = np.tile(i0, channels)
         i1 = stride * np.repeat(np.arange(h_out), w_out)
         i = i0.reshape(-1, 1) + i1.reshape(1, -1)
 
+        # Create column indices for patches
         j0 = np.tile(np.arange(w_k), h_k * channels)
         j1 = stride * np.tile(np.arange(w_out), h_out)
         j = j0.reshape(-1, 1) + j1.reshape(1, -1)
 
+        # Create depth indices for patches
         d = np.repeat(np.arange(channels), h_k * w_k).reshape(-1, 1)
 
         return i, j, d
 
+    def im2col(self, image: np.ndarray, window_size: tuple, stride: int):
+        """
+        Convert an image to columnar format for matrix multiplication.
 
+        Parameters
+        ----------
+        image : np.ndarray
+            Input image of shape (batch_size, channels, height, width).
+        window_size : tuple
+            Size of the convolution kernel as (kernel_height, kernel_width).
+        stride : int
+            Stride of the convolution.
+
+        Returns
+        -------
+        columnar : np.ndarray
+            Image patches in columnar format of shape
+            (batch_size, kernel_size * channels, output_size).
+        """
+        samples, channels = image.shape[:2]
+
+        # Generate slicing indices
+        i, j, d = self._generate_indices(
+            image_size=image.shape,
+            window_size=window_size,
+            stride=stride
+        )
+
+        # Extract patches and reshape into columnar format
+        columnar = image[:, d, i, j].reshape((samples, np.prod(window_size) * channels, -1))
+        return columnar
+
+    def col2im(self, columnar: np.ndarray, window_size: tuple, image_size: tuple, stride: int):
+        """
+        Convert columnar patches back to image format.
+
+        Parameters
+        ----------
+        columnar : np.ndarray
+            Columnar patches of shape (batch_size, kernel_size * channels, output_size).
+        window_size : tuple
+            Size of the convolution kernel as (kernel_height, kernel_width).
+        image_size : tuple
+            Shape of the original image as (batch_size, channels, height, width).
+        stride : int
+            Stride of the convolution.
+
+        Returns
+        -------
+        image : np.ndarray
+            Reconstructed image of shape (batch_size, channels, height, width).
+        """
+        # Generate slicing indices
+        i, j, d = self._generate_indices(
+            image_size=image_size,
+            window_size=window_size,
+            stride=stride
+        )
+
+        # Initialize empty image
+        image = np.zeros(shape=image_size, dtype=columnar.dtype)
+
+        # Add values back to image using columnar patches
+        np.add.at(image, (slice(None), d, i, j), columnar)
+        return image
