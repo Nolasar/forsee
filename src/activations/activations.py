@@ -1,39 +1,60 @@
 import numpy as np
 
 class Sigmoid:
-    def __call__(self, x):
-        '''
-        Forward pass: Compute the sigmoid activation.
-        
-        Parameters
-        ----------
-        - x: argument of sigmoid ( 1 / (1 + e^(-x)))
-        '''
-        return  1 / (1 + np.exp(-x))
-
-    def backward(self, sigm):
-        '''
-        Backward pass: Compute the derivative of the sigmoid function.
-        The derivative is sigmoid(x) * (1 - sigmoid(x)).
-
-        Parameters
-        ----------
-        - sigm: output of sigmoid (sigm = sigmoid(x))
-        '''
-        return sigm * (1 - sigm)
-    
-
-class Softmax:
+    """
+    Sigmoid activation function.
+    """
     def __call__(self, x):
         """
-        Forward pass for the softmax function.
-        
-        Args:
-            x (np.ndarray): Input array of shape (N, C), where N is the batch size 
-                            and C is the number of classes.
-                            
-        Returns:
-            np.ndarray: Softmax probabilities of the same shape as x.
+        Forward pass: Compute the sigmoid activation.
+
+        Parameters
+        ----------
+        x : np.ndarray
+            Input array.
+
+        Returns
+        -------
+        np.ndarray
+            Sigmoid activation: 1 / (1 + e^(-x)).
+        """
+        return 1 / (1 + np.exp(-x))
+
+    def backward(self, sigm):
+        """
+        Backward pass: Compute the derivative of the sigmoid function.
+
+        Parameters
+        ----------
+        sigm : np.ndarray
+            Output of the sigmoid function.
+
+        Returns
+        -------
+        np.ndarray
+            Derivative of sigmoid: sigmoid(x) * (1 - sigmoid(x)).
+        """
+        return sigm * (1 - sigm)
+
+
+class Softmax:
+    """
+    Softmax activation function.
+    """
+    def __call__(self, x):
+        """
+        Forward pass: Compute the softmax probabilities.
+
+        Parameters
+        ----------
+        x : np.ndarray
+            Input array of shape (N, C), where N is the batch size 
+            and C is the number of classes.
+
+        Returns
+        -------
+        np.ndarray
+            Softmax probabilities of the same shape as x.
         """
         # Stabilize computation by subtracting max along each row
         shifted_x = x - np.max(x, axis=1, keepdims=True)
@@ -41,19 +62,21 @@ class Softmax:
         self.out = exp_x / np.sum(exp_x, axis=1, keepdims=True)  # Store output for backward pass
         return self.out
 
-
     def backward(self, grad_output):
         """
-        Backward pass for the softmax function using broadcasting.
+        Backward pass: Compute the gradient of the loss with respect to the input.
 
-        Args:
-            grad_output (np.ndarray): Gradient of the loss with respect to the output 
-                                    of the softmax function. Shape is (N, C).
+        Parameters
+        ----------
+        grad_output : np.ndarray
+            Gradient of the loss with respect to the output of the softmax function. 
+            Shape is (N, C).
 
-        Returns:
-            np.ndarray: Gradient of the loss with respect to the input x. Shape is (N, C).
+        Returns
+        -------
+        np.ndarray
+            Gradient of the loss with respect to the input. Shape is (N, C).
         """
-        # self.out shape: (N, C)
         N, C = self.out.shape
 
         # Compute the outer product y * y^T for each sample
@@ -62,5 +85,47 @@ class Softmax:
 
         # Batch multiply Jacobian with grad_output
         grad_input = np.einsum("nij,nj->ni", jacobian, grad_output)  # Shape (N, C)
-
         return grad_input
+
+
+class Relu:
+    """
+    ReLU (Rectified Linear Unit) activation function.
+    """
+    def __call__(self, x):
+        """
+        Forward pass: Compute the ReLU activation.
+
+        Parameters
+        ----------
+        x : np.ndarray
+            Input array of shape (N, C), where N is the batch size 
+            and C is the number of features.
+
+        Returns
+        -------
+        np.ndarray
+            Output after applying ReLU, same shape as input x.
+        """
+        self.input = x  # Store input for backward pass
+        self.out = np.maximum(0, x)  # ReLU: f(x) = max(0, x)
+        return self.out
+
+    def backward(self, grad_output):
+        """
+        Backward pass: Compute the gradient of the loss with respect to the input.
+
+        Parameters
+        ----------
+        grad_output : np.ndarray
+            Gradient of the loss with respect to the output of the ReLU function. 
+            Shape is (N, C).
+
+        Returns
+        -------
+        np.ndarray
+            Gradient of the loss with respect to the input x. Shape is (N, C).
+        """
+        grad_input = grad_output * (self.input > 0)  # Derivative: 1 if input > 0, else 0
+        return grad_input
+
