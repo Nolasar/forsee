@@ -3,7 +3,7 @@ from src.layers.layer import Layer
 from src.layers.dense import Dense
 from src.layers.conv2d import Conv2d
 from src.layers.flatten import Flatten
-from src.layers.maxpool import MaxPool2D
+from src.layers.maxpool import MaxPool2d
 from src.optimazers.adam import Adam
 
 class Sequential:
@@ -44,7 +44,7 @@ class Sequential:
             # Update input size for the next layer
             if isinstance(layer, (Dense, Flatten)):
                 input_size = layer.units
-            elif isinstance(layer, (Conv2d, MaxPool2D)):
+            elif isinstance(layer, (Conv2d, MaxPool2d)):
                 input_size = layer.output_size
 
     def _feedforward(self, X):
@@ -66,7 +66,7 @@ class Sequential:
             prev_out = layer.forward(prev_out)  # Pass through each layer
         return prev_out
 
-    def _backprop(self, loss_grad):
+    def _backprop(self, loss_grad, lr):
         """
         Perform backward propagation through all layers.
 
@@ -77,7 +77,7 @@ class Sequential:
         """
         output_grad = loss_grad  # Store the gradient for the current layer
         for layer in reversed(self.layers):
-            output_grad = layer.backward(output_grad)  # Backpropagate gradient
+            output_grad = layer.backward(output_grad, lr)  # Backpropagate gradient
 
     def train(self, X, y, loss_fn, metric_fn, epochs=250, lr=0.001) -> None:
         """
@@ -104,21 +104,22 @@ class Sequential:
         """
         self._build(X)  # Initialize weights and biases
 
-        optimizer = Adam(self.layers, lr)  # Create an Adam optimizer instance
+        optimizer = Adam(self.layers, lr=lr, beta1=0.9, beta2=0.999, epsilon=1e-8)  # Create an Adam optimizer instance
 
         for epoch in range(epochs):
             # Perform forward pass
             y_pred = self._feedforward(X)
 
             # Compute the loss
-            loss = loss_fn(y_true=y, y_pred=y_pred)
+            loss = loss_fn(y_pred, y)
 
             # Compute the gradient of the loss
             dloss = loss_fn.backward()
 
             # Perform backward pass
-            self._backprop(dloss)
+            self._backprop(dloss, lr)
 
+            
             # Update weights using the optimizer
             optimizer.step()
 
