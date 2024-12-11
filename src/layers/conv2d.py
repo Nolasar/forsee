@@ -16,6 +16,7 @@ class Conv2d(Layer):
         bias_initializer: str = 'zeros',
         stride: int = 1,
         padding: int = 0,
+        random_state: int = 42
     ):
         """
         Initialize the Conv2d layer.
@@ -39,11 +40,12 @@ class Conv2d(Layer):
         """
         self.channels_out = channels_out
         self.kernel_size = kernel_size
-        self.activation = activations.get(activation)()
+        self.activation = activations.get(activation)() if activation is not None else None
         self.kernel_initializer = initializers.get(kernel_initializer)()
         self.bias_initializer = initializers.get(bias_initializer)()
         self.stride = stride
         self.pad = padding
+        self.rnd_state = random_state
 
     def build(self, input_size: tuple):
         """
@@ -62,8 +64,9 @@ class Conv2d(Layer):
         self.output_size = (self.channels_out, h_out, w_out)
 
         # Initialize kernel and bias
-        self.kernel = self.kernel_initializer(shape=(self.channels_out, self.input_size[0], *self.kernel_size))
-        self.bias = self.bias_initializer(shape=(self.channels_out,))
+        self.kernel = self.kernel_initializer(shape=(self.channels_out, self.input_size[0], *self.kernel_size), 
+                                              random_state=self.rnd_state)
+        self.bias = self.bias_initializer(shape=(self.channels_out,), random_state=self.rnd_state)
 
         # Initialize the Functional utility
         self.tools = Functional()
@@ -101,16 +104,20 @@ class Conv2d(Layer):
         self.kernel_col = self.kernel.reshape(self.channels_out, -1)
 
         # Perform convolution as a matrix multiplication
-        output_col = self.kernel_col @ self.image_col + self.bias[np.newaxis, :, np.newaxis]
 
         # Apply activation if specified
+        self.pre_activation = (self.kernel_col @ self.image_col) + self.bias.reshape(-1, 1)
+ 
         if self.activation is not None:
-            output_col = self.activation(output_col)
-
+            self.out_activated = self.activation(self.pre_activation)
+        else:
+            self.out_activated = self.pre_activation
+        
         # Reshape the output to its final shape
-        return output_col.reshape(samples, self.channels_out, *self.output_size[1:])
+        return self.out_activated.reshape(samples, self.channels_out, *self.output_size[1:])
 
-    def backward(self, dout: np.ndarray):
+
+    def backward(self, dout: np.ndarray, lr):
         """
         Perform the backward pass of the Conv2d layer.
 
@@ -130,8 +137,10 @@ class Conv2d(Layer):
         dout_col = dout.reshape(samples, self.channels_out, -1)
 
         # Apply activation's derivative
+
         if self.activation is not None:
-            dout_col = self.activation.backward(dout_col)
+            dactivation = self.activation.backward(self.pre_activation)  
+            dout_col = dactivation * dout_col
 
         # Compute gradient of the kernel
         dkernel_col = np.einsum('scm,snm->cn', dout_col, self.image_col)
