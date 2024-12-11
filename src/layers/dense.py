@@ -23,14 +23,16 @@ class Dense(Layer):
         activation: str,
         weights_initializer: str = 'glorot_uniform',
         bias_initializer: str = 'glorot_uniform',
+        random_state:int = 42
     ):
         """
         Initialize the Dense layer.
         """
         self.units = units
-        self.activation = activations.get(activation)()
+        self.activation = activations.get(activation)() if activation is not None else None
         self.weights_initializer = initializers.get(weights_initializer)()
         self.bias_initializer = initializers.get(bias_initializer)()
+        self.rnd_state = random_state
 
     def build(self, input_size):
         """
@@ -48,8 +50,8 @@ class Dense(Layer):
             units_in = input_size
 
         # Initialize weights and bias
-        self.weights = self.weights_initializer(shape=(units_in, self.units))
-        self.bias = self.bias_initializer(shape=(1, self.units))
+        self.weights = self.weights_initializer(shape=(units_in, self.units),  random_state = self.rnd_state)
+        self.bias = self.bias_initializer(shape=(1, self.units), random_state = self.rnd_state)
 
     def forward(self, input: np.ndarray):
         """
@@ -68,13 +70,13 @@ class Dense(Layer):
         """
         self.input = input  # Save input for backward pass
         # Linear combination
-        out = self.input @ self.weights + self.bias
+        self.output = self.input @ self.weights + self.bias
         # Apply activation function if specified
         if self.activation is not None:
-            out = self.activation(out)
-        return out
+            self.output = self.activation(self.output)
+        return self.output
 
-    def backward(self, prev_grad: np.ndarray):
+    def backward(self, prev_grad: np.ndarray, lr):
         """
         Perform the backward pass to compute gradients and propagate them.
 
@@ -89,13 +91,11 @@ class Dense(Layer):
             Gradient of the loss with respect to the layer's input.
         """
         # Compute gradient of activation
-        out = self.forward(self.input)
-        grad = self.activation.backward(out) * prev_grad
-
+        grad = self.activation.backward(prev_grad)
         # Compute gradients for weights and biases
         self.dweights = self.input.T @ grad
-        self.dbias = np.ones((1, grad.shape[0])) @ grad
-
+        self.dbias = np.sum(grad, axis=0, keepdims=True)
+        
         # Compute gradient for the previous layer
         return grad @ self.weights.T
 
