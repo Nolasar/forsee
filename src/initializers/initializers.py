@@ -7,6 +7,6 @@ class GlorotUniform:
         return rng.uniform(low=-limit, high=limit, size=shape)   
     
 class Zeros:
-    def __call__(self, shape):
+    def __call__(self, shape, random_state=None):
         return np.zeros(shape=shape)
     

@@ -47,7 +47,7 @@ class Flatten(Layer):
         # Reshape input to (samples, units)
         return input.reshape(input.shape[0], self.units)
 
-    def backward(self, dout: np.ndarray):
+    def backward(self, dout: np.ndarray, lr):
         """
         Reshape the gradient to the original input shape.
 

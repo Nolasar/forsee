@@ -85,6 +85,6 @@ class CrossEntropy:
             shape (N, C).
         """
         # Gradient computation for CE
-        return (self.y_pred - self.y_true) / self.y_pred.shape[0]
+        return self.y_pred - self.y_true
 
 
