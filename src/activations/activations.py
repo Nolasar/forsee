@@ -77,14 +77,9 @@ class Softmax:
         np.ndarray
             Gradient of the loss with respect to the input. Shape is (N, C).
         """
-        N, C = self.out.shape
-
-        # Compute the outer product y * y^T for each sample
-        y = self.out[:, :, np.newaxis]  # Shape (N, C, 1)
-        jacobian = np.eye(C) * y - np.matmul(y, y.transpose(0, 2, 1))  # Shape (N, C, C)
-
         # Batch multiply Jacobian with grad_output
-        grad_input = np.einsum("nij,nj->ni", jacobian, grad_output)  # Shape (N, C)
+        grad_input = self.out * (grad_output - np.sum(grad_output * self.out, axis=1, keepdims=True))
+
         return grad_input
 
 
@@ -126,6 +121,7 @@ class Relu:
         np.ndarray
             Gradient of the loss with respect to the input x. Shape is (N, C).
         """
-        grad_input = grad_output * (self.input > 0)  # Derivative: 1 if input > 0, else 0
+        grad_input = grad_output * (self.input > 0).astype(np.float32)
+
         return grad_input
 
